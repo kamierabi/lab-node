@@ -190,7 +190,8 @@ void tcp_server::start() {
     init_transports();
     init_server();
     std::cout << "Server listening on port " << port << std::endl;
-    logger.log(Logger::LogLevel::DEBUG, std::format("Server listening on port {}", port));
+    // logger.log(Logger::LogLevel::DEBUG, std::format("Server listening on port {}", port));
+    logger.log(Logger::LogLevel::DEBUG, "Server is listening");
 
     while (true) {
         sockaddr_in client_addr;

@@ -1,1 +1,5 @@
 .vscode
+transport
+*.so
+lab-exec-node
+logs
