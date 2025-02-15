@@ -1,5 +1,5 @@
 #ifndef _LAB_PROTOCOL_H
-#define _LAB_PROTOCOL_H 1
+#define _LAB_PROTOCOL_H 
 
 // general view of protocol:
 // request = [u8 version][u8 transport][u8 opcode][u8 buffer_size][any data]

@@ -1,8 +1,6 @@
 #include "Server.hpp"
 
 
-// tcp_server::tcp_server(int port) : port(port), server_socket(-1) {}
-
 tcp_server::tcp_server(int _port) {
     port = _port;
     server_socket = -1;
@@ -67,9 +65,11 @@ void tcp_server::init_transports() {
                         transport_map[manifest_map[filename]] = lib;
 
                     } else {
+                        logger.log(Logger::LogLevel::ERROR, "Module was not found in manifest file " + path.string());
                         FreeLibrary(lib);
                     }
                 else {
+                    logger.log(Logger::LogLevel::ERROR, "Error occured while loading module " + path.string());
                     FreeLibrary(lib);
                 }
                 }
@@ -83,10 +83,12 @@ void tcp_server::init_transports() {
                         transport_map[manifest_map[filename]] = lib;
                     }
                     else {
-                       dlclose(lib);  
+                        logger.log(Logger::LogLevel::ERROR, "Module was not found in manifest file " + path.string());
+                        dlclose(lib);  
                     } 
                 }
                 else {
+                    logger.log(Logger::LogLevel::ERROR, "Error occured while loading module " + path.string());
                     dlclose(lib);
                 }
             }
@@ -97,29 +99,57 @@ void tcp_server::init_transports() {
 
 LAB_STATUS tcp_server::_execute(uint8_t transport_id, uint8_t _opcode, std::vector<uint8_t>& buffer_in, std::vector<uint8_t>& buffer_out, std::vector<uint8_t>& buffer_err) {
     int transport = static_cast<int>(transport_id);
-    // int opcode = static_cast<int>(_opcode);
-    if (transport_map.find(transport) != transport_map.end()) {
+
+    /*Lambda function to propagate error from the module*/
+    auto is_err_null = [](std::vector<uint8_t>& vec_err) -> bool {
+        bool found_non_zero = false;
+        size_t new_size = 0;
+        // Перебор всех элементов вектора
+        for (size_t i = 0; i < vec_err.size(); ++i) {
+            if (vec_err[i] != 0x00) {
+                found_non_zero = true; 
+                ++new_size;
+            } else if (found_non_zero) {
+                vec_err.resize(new_size);
+                break;
+            }
+        }
+        return found_non_zero;
+    };
+
+    /*Echo functionality*/
+    if (transport_id == 0) {
+        std::memcpy(buffer_out.data(), buffer_in.data(), buffer_in.size());
+        return SUCCESS;
+    } 
+    else if (transport_map.find(transport) != transport_map.end()) {
         switch(_opcode) {
             case OP_READ:
             {
                 #ifdef _WIN32
-                func_type* func_ptr = reinterpret_cast<func_type*>(GetProcAddress(transport_map[transport], "read"));
+                func_type* func_ptr = reinterpret_cast<func_type*>(GetProcAddress(transport_map[transport], "lab_read"));
                 DWORD getprocaddr_error = GetLastError();
                 if (getprocaddr_error) {
-                    std:cerr << "Failed to load function": << std::string(getprocaddr_error) << std::endl;
+                    logger.log(Logger::LogLevel::ERROR, "Failed to load function: " + std::string(getprocaddr_error));
+                    // std:cerr << "Failed to load function": << std::string(getprocaddr_error) << std::endl;
                     return ERROR_NO_OPERATION;
                 }
                 #else
-                func_type* func_ptr = reinterpret_cast<func_type*>(dlsym(transport_map[transport], "read"));
+                func_type* func_ptr = reinterpret_cast<func_type*>(dlsym(transport_map[transport], "lab_read"));
                 const char* dlsym_error = dlerror();
                 if (dlsym_error) {
-                    std::cerr << "Failed to load function: " << dlsym_error << std::endl;
+                    logger.log(Logger::LogLevel::ERROR, "Failed to load function: " + std::string(dlsym_error));
+                    // std::cerr << "Failed to load function: " << dlsym_error << std::endl;
                     return ERROR_NO_OPERATION;
                 }
                 #endif
                 std::function<void(uint8_t*, uint8_t*, uint8_t*)> func = func_ptr;
                 func(buffer_in.data(), buffer_out.data(), buffer_err.data());
-                if (buffer_err.data() == NULL) {
+                if (is_err_null(buffer_err)) {
+                    logger.log(Logger::LogLevel::ERROR, "Error occured in write function of transport "
+                                                        + std::to_string(transport)
+                                                        + std::string(": ")
+                                                        + std::string(reinterpret_cast<char*>(buffer_err.data()), buffer_err.size()));
                     return ERROR_MODULE_INTERNAL;
                 }
                 else {
@@ -129,23 +159,29 @@ LAB_STATUS tcp_server::_execute(uint8_t transport_id, uint8_t _opcode, std::vect
             case OP_WRITE:
             {
                 #ifdef _WIN32
-                func_type* func_ptr = reinterpret_cast<func_type*>(GetProcAddress(transport_map[transport], "write"));
+                func_type* func_ptr = reinterpret_cast<func_type*>(GetProcAddress(transport_map[transport], "lab_write"));
                 DWORD getprocaddr_error = GetLastError();
                 if (getprocaddr_error) {
-                    std:cerr << "Failed to load function": << std::string(getprocaddr_error) << std::endl;
+                    logger.log(Logger::LogLevel::ERROR, "Failed to load function: " + std::string(getprocaddr_error));
+                    // std:cerr << "Failed to load function": << std::string(getprocaddr_error) << std::endl;
                     return ERROR_NO_OPERATION;
                 }
                 #else
-                func_type* func_ptr = reinterpret_cast<func_type*>(dlsym(transport_map[transport], "write"));
+                func_type* func_ptr = reinterpret_cast<func_type*>(dlsym(transport_map[transport], "lab_write"));
                 const char* dlsym_error = dlerror();
                 if (dlsym_error) {
-                    std::cerr << "Failed to load function: " << dlsym_error << std::endl;
+                    // std::cerr << "Failed to load function: " << dlsym_error << std::endl;
+                    logger.log(Logger::LogLevel::ERROR, "Failed to load function: " + std::string(dlsym_error));
                     return ERROR_NO_OPERATION;
                 }
                 #endif
                 std::function<void(uint8_t*, uint8_t*, uint8_t*)> func = func_ptr;
                 func(buffer_in.data(), buffer_out.data(), buffer_err.data());
-                if (buffer_err.data() == NULL) {
+                if (is_err_null(buffer_err)) {
+                    logger.log(Logger::LogLevel::ERROR, "Error occured in write function of transport "
+                                                        + std::to_string(transport)
+                                                        + std::string(": ")
+                                                        + std::string(reinterpret_cast<char*>(buffer_err.data()), buffer_err.size()));
                     return ERROR_MODULE_INTERNAL;
                 }
                 else {
@@ -190,8 +226,7 @@ void tcp_server::start() {
     init_transports();
     init_server();
     std::cout << "Server listening on port " << port << std::endl;
-    // logger.log(Logger::LogLevel::DEBUG, std::format("Server listening on port {}", port));
-    logger.log(Logger::LogLevel::DEBUG, "Server is listening");
+    logger.log(Logger::LogLevel::DEBUG, "Server is listening on port " + std::to_string(port));
 
     while (true) {
         sockaddr_in client_addr;
@@ -231,7 +266,6 @@ void tcp_server::handle_connection(int client_socket) {
     std::vector<uint8_t> buf_out(buf_out_size);
 
     // Allocate the error buffer
-    // constexpr size_t buf_err_size = BUFFER_ERROR_SIZE;
     std::vector<uint8_t> buf_err(BUFFER_ERROR_SIZE);
 
     // Execute the processing function
@@ -247,13 +281,6 @@ void tcp_server::handle_connection(int client_socket) {
 
         send(client_socket, response_data.data(), response_data.size(), 0);
     } else {
-        // Failure: Print error buffer to standard output
-        // std::cerr << "Error buffer contents:" << std::endl;
-        // for (size_t i = 0; i < buf_err.size(); ++i) {
-        //     std::cerr << std::hex << static_cast<int>(buf_err[i]) << " ";
-        //     if ((i + 1) % 16 == 0) std::cerr << std::endl; // Line break for readability
-        // }
-        // std::cerr << std::endl;
          // Send only the header with the execution result to the client
         send(client_socket, response_header, sizeof(response_header), 0);
 

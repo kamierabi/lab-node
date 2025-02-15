@@ -1,2 +1,2 @@
-# Laboratory Automation Backend (LAB) - Execution Node (WIP)
+# Laboratory Automation Backend (LAB) - Instrumental Server (WIP)
 
