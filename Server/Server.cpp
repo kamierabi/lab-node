@@ -97,9 +97,8 @@ void tcp_server::init_transports() {
     }
 }
 
-LAB_STATUS tcp_server::_execute(uint8_t transport_id, uint8_t _opcode, std::vector<uint8_t>& buffer_in, std::vector<uint8_t>& buffer_out, std::vector<uint8_t>& buffer_err) {
+LAB_STATUS tcp_server::_execute(uint8_t transport_id, uint8_t _opcode, std::vector<uint8_t>& buffer_in, std::vector<uint8_t>& buffer_out, std::vector<uint8_t>& buffer_err, size_t& data_size) {
     int transport = static_cast<int>(transport_id);
-
     /*Lambda function to propagate error from the module*/
     auto is_err_null = [](std::vector<uint8_t>& vec_err) -> bool {
         bool found_non_zero = false;
@@ -120,6 +119,7 @@ LAB_STATUS tcp_server::_execute(uint8_t transport_id, uint8_t _opcode, std::vect
     /*Echo functionality*/
     if (transport_id == 0) {
         std::memcpy(buffer_out.data(), buffer_in.data(), buffer_in.size());
+        data_size = buffer_in.size();
         return SUCCESS;
     } 
     else if (transport_map.find(transport) != transport_map.end()) {
@@ -131,7 +131,6 @@ LAB_STATUS tcp_server::_execute(uint8_t transport_id, uint8_t _opcode, std::vect
                 DWORD getprocaddr_error = GetLastError();
                 if (getprocaddr_error) {
                     logger.log(Logger::LogLevel::ERROR, "Failed to load function: " + std::string(getprocaddr_error));
-                    // std:cerr << "Failed to load function": << std::string(getprocaddr_error) << std::endl;
                     return ERROR_NO_OPERATION;
                 }
                 #else
@@ -139,12 +138,11 @@ LAB_STATUS tcp_server::_execute(uint8_t transport_id, uint8_t _opcode, std::vect
                 const char* dlsym_error = dlerror();
                 if (dlsym_error) {
                     logger.log(Logger::LogLevel::ERROR, "Failed to load function: " + std::string(dlsym_error));
-                    // std::cerr << "Failed to load function: " << dlsym_error << std::endl;
                     return ERROR_NO_OPERATION;
                 }
                 #endif
-                std::function<void(uint8_t*, uint8_t*, uint8_t*)> func = func_ptr;
-                func(buffer_in.data(), buffer_out.data(), buffer_err.data());
+                std::function<void(uint8_t*, uint8_t*, uint8_t*, size_t*, size_t, size_t)> func = func_ptr;
+                func(buffer_in.data(), buffer_out.data(), buffer_err.data(), &data_size, buffer_in.size(), buffer_out.size());
                 if (is_err_null(buffer_err)) {
                     logger.log(Logger::LogLevel::ERROR, "Error occured in write function of transport "
                                                         + std::to_string(transport)
@@ -170,13 +168,12 @@ LAB_STATUS tcp_server::_execute(uint8_t transport_id, uint8_t _opcode, std::vect
                 func_type* func_ptr = reinterpret_cast<func_type*>(dlsym(transport_map[transport], "lab_write"));
                 const char* dlsym_error = dlerror();
                 if (dlsym_error) {
-                    // std::cerr << "Failed to load function: " << dlsym_error << std::endl;
                     logger.log(Logger::LogLevel::ERROR, "Failed to load function: " + std::string(dlsym_error));
                     return ERROR_NO_OPERATION;
                 }
                 #endif
-                std::function<void(uint8_t*, uint8_t*, uint8_t*)> func = func_ptr;
-                func(buffer_in.data(), buffer_out.data(), buffer_err.data());
+                std::function<void(uint8_t*, uint8_t*, uint8_t*, size_t*, size_t, size_t)> func = func_ptr;
+                func(buffer_in.data(), buffer_out.data(), buffer_err.data(), &data_size, buffer_in.size(), buffer_out.size());
                 if (is_err_null(buffer_err)) {
                     logger.log(Logger::LogLevel::ERROR, "Error occured in write function of transport "
                                                         + std::to_string(transport)
@@ -269,12 +266,14 @@ void tcp_server::handle_connection(int client_socket) {
     std::vector<uint8_t> buf_err(BUFFER_ERROR_SIZE);
 
     // Execute the processing function
-    LAB_STATUS exec_result = _execute(recv_buffer[1], recv_buffer[2], buf_in, buf_out, buf_err);
+    size_t bytes_written = 0;
+    LAB_STATUS exec_result = _execute(recv_buffer[1], recv_buffer[2], buf_in, buf_out, buf_err, bytes_written);
     uint8_t response_header[4] = {recv_buffer[0], recv_buffer[1], recv_buffer[2], exec_result};
     // Prepare response data
-    if (exec_result == SUCCESS) {
+    if (exec_result == SUCCESS && bytes_written != 0) {
         // Success: Send header and output buffer to the client
         std::vector<uint8_t> response_data;
+        buf_out.resize(bytes_written);
         response_data.reserve(sizeof(response_header) + buf_out.size());
         response_data.insert(response_data.end(), response_header, response_header + sizeof(response_header));
         response_data.insert(response_data.end(), buf_out.begin(), buf_out.end());

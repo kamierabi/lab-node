@@ -15,9 +15,6 @@
 
 #define PROTOCOL_V1                     0x01
 
-// Transports
-
-
 // Operations
 
 #define OP_READ                         0x01

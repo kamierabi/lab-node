@@ -16,8 +16,6 @@
 #include <unordered_map>
 #include <functional>
 #include <algorithm>
-#include <csignal>
-
 
 #ifdef _WIN32
     #include <windows.h>
@@ -31,8 +29,17 @@
     #include <unistd.h>
 #endif
 
+// struct Response {
+//     size_t buffer_size;
+//     uint8_t* buffer_in;
+//     uint8_t* buffer_out;
+//     uint8_t* buffer_err;
+//     size_t* data_written;
+// };
+
 namespace fs = std::filesystem;
-using func_type = void(uint8_t*, uint8_t*, uint8_t*);
+using func_type = void(uint8_t*, uint8_t*, uint8_t*, size_t*, size_t, size_t);
+// using func_type = void(Response&);
 constexpr int MAX_BUFFER_SIZE = MAX_PACKET_SIZE;
 
 #ifdef _WIN32
@@ -50,11 +57,11 @@ class tcp_server {
 public:
     tcp_server(int port);
     ~tcp_server();
-    #ifdef _WIN32
+#ifdef _WIN32
     std::unordered_map<int, HMODULE> transport_map;
-    #else
+#else
     std::unordered_map<int, void*> transport_map;
-    #endif
+#endif
 
     /**
      * @brief Starts the server.
@@ -82,5 +89,6 @@ private:
      * @param client_socket The socket descriptor for the client.
      */
     void handle_connection(int client_socket);
-    LAB_STATUS _execute(uint8_t transport_id, uint8_t _opcode, std::vector<uint8_t>& buffer_in, std::vector<uint8_t>& buffer_out, std::vector<uint8_t>& buffer_err);
+    LAB_STATUS _execute(uint8_t transport_id, uint8_t _opcode, std::vector<uint8_t>& buffer_in, std::vector<uint8_t>& buffer_out, std::vector<uint8_t>& buffer_err, size_t& data_size);
+    // LAB_STATUS _execute(uint8_t transport_id, uint8_t _opcode, Response& rs);
 };
