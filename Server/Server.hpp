@@ -29,17 +29,18 @@
     #include <unistd.h>
 #endif
 
-// struct Response {
-//     size_t buffer_size;
-//     uint8_t* buffer_in;
-//     uint8_t* buffer_out;
-//     uint8_t* buffer_err;
-//     size_t* data_written;
-// };
+typedef struct proc_sig {
+    uint8_t* buffer_in;
+    size_t buf_in_size;
+    uint8_t* buffer_out;
+    size_t buf_out_size;
+    uint8_t* buffer_err;
+    size_t* data_written;
+} call_signature;
 
 namespace fs = std::filesystem;
-using func_type = void(uint8_t*, uint8_t*, uint8_t*, size_t*, size_t, size_t);
-// using func_type = void(Response&);
+// using func_type = void(uint8_t*, uint8_t*, uint8_t*, size_t*, size_t, size_t);
+using func_type = void(call_signature*);
 constexpr int MAX_BUFFER_SIZE = MAX_PACKET_SIZE;
 
 #ifdef _WIN32

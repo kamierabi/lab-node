@@ -141,8 +141,19 @@ LAB_STATUS tcp_server::_execute(uint8_t transport_id, uint8_t _opcode, std::vect
                     return ERROR_NO_OPERATION;
                 }
                 #endif
-                std::function<void(uint8_t*, uint8_t*, uint8_t*, size_t*, size_t, size_t)> func = func_ptr;
-                func(buffer_in.data(), buffer_out.data(), buffer_err.data(), &data_size, buffer_in.size(), buffer_out.size());
+
+                // std::function<void(uint8_t*, uint8_t*, uint8_t*, size_t*, size_t, size_t)> func = func_ptr;
+                std::function<void(call_signature*)> func = func_ptr;
+                call_signature signature = {
+                    .buffer_in = buffer_in.data(),
+                    .buf_in_size = buffer_in.size(),
+                    .buffer_out = buffer_out.data(),
+                    .buf_out_size = buffer_out.size(),
+                    .buffer_err = buffer_err.data(),
+                    .data_written = &data_size
+                };
+                // func(buffer_in.data(), buffer_out.data(), buffer_err.data(), &data_size, buffer_in.size(), buffer_out.size());
+                func(&signature);
                 if (is_err_null(buffer_err)) {
                     logger.log(Logger::LogLevel::ERROR, "Error occured in write function of transport "
                                                         + std::to_string(transport)
@@ -172,8 +183,18 @@ LAB_STATUS tcp_server::_execute(uint8_t transport_id, uint8_t _opcode, std::vect
                     return ERROR_NO_OPERATION;
                 }
                 #endif
-                std::function<void(uint8_t*, uint8_t*, uint8_t*, size_t*, size_t, size_t)> func = func_ptr;
-                func(buffer_in.data(), buffer_out.data(), buffer_err.data(), &data_size, buffer_in.size(), buffer_out.size());
+                // std::function<void(uint8_t*, uint8_t*, uint8_t*, size_t*, size_t, size_t)> func = func_ptr;
+                // func(buffer_in.data(), buffer_out.data(), buffer_err.data(), &data_size, buffer_in.size(), buffer_out.size());
+                call_signature signature = {
+                    .buffer_in = buffer_in.data(),
+                    .buf_in_size = buffer_in.size(),
+                    .buffer_out = buffer_out.data(),
+                    .buf_out_size = buffer_out.size(),
+                    .buffer_err = buffer_err.data(),
+                    .data_written = &data_size
+                };
+                std::function<void(call_signature*)> func = func_ptr;
+                func(&signature);
                 if (is_err_null(buffer_err)) {
                     logger.log(Logger::LogLevel::ERROR, "Error occured in write function of transport "
                                                         + std::to_string(transport)
