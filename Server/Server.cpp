@@ -9,19 +9,15 @@ tcp_server::tcp_server(int _port) {
 
 tcp_server::~tcp_server() {
     CLOSE_SOCKET(server_socket);
-    for (auto& [transport_id, handle] : transport_map) {
-#ifdef _WIN32
-        FreeLibrary(handle);
-#else
-        dlclose(handle);
-#endif
+    for (size_t i=0; i<modules.size(); i++) {
+        FREE_MODULE(modules[i].handle);
     }
-#ifdef _WIN32
+#ifdef WIN32
     WSACleanup();
 #endif
 }
 
-void tcp_server::init_transports() {
+void tcp_server::load_manifest() {
     const fs::path transport_dir = "./transport";
     const fs::path manifest_file = transport_dir / "manifest.conf";
 
@@ -37,181 +33,145 @@ void tcp_server::init_transports() {
         return;
     }
 
-    // Parse the manifest file
-    std::unordered_map<std::string, int> manifest_map;
-    std::ifstream manifest(manifest_file);
-    std::string line;
-
-    while (std::getline(manifest, line)) {
-        std::istringstream line_stream(line);
-        std::string library_name;
-        int transport_id;
-        if (std::getline(line_stream, library_name, '=') && (line_stream >> transport_id)) {
-            library_name = fs::path(library_name).filename().string();
-            manifest_map[library_name] = transport_id;
-        }
+    std::ifstream file(manifest_file);
+    if (!file) {
+        std::cerr << "ERROR: cannot open file " << manifest_file << "\n";
+        logger.log(Logger::LogLevel::ERROR, "cannot open manifest file.");
+        return;
     }
 
-    for (const auto& entry : fs::directory_iterator(transport_dir)) {
-        if (entry.is_regular_file()) {
-            const auto& path = entry.path();
-            std::string extension = path.extension().string();
-#ifdef _WIN32
-            if (extension == ".dll") {
-                HMODULE lib = LoadLibrary(path.string().c_str());
-                if (lib) {
-                    std::string filename = path.filename().string();
-                    if (manifest_map.find(filename) != manifest_map.end()) {
-                        transport_map[manifest_map[filename]] = lib;
-
-                    } else {
-                        logger.log(Logger::LogLevel::ERROR, "Module was not found in manifest file " + path.string());
-                        FreeLibrary(lib);
-                    }
-                else {
-                    logger.log(Logger::LogLevel::ERROR, "Error occured while loading module " + path.string());
-                    FreeLibrary(lib);
-                }
-                }
-            }
-#else
-            if (extension == ".so") {
-                void* lib = dlopen(path.string().c_str(), RTLD_NOW);
-                if (lib) {
-                    std::string filename = path.filename().string();
-                    if (manifest_map.find(filename) != manifest_map.end()) {
-                        transport_map[manifest_map[filename]] = lib;
-                    }
-                    else {
-                        logger.log(Logger::LogLevel::ERROR, "Module was not found in manifest file " + path.string());
-                        dlclose(lib);  
-                    } 
-                }
-                else {
-                    logger.log(Logger::LogLevel::ERROR, "Error occured while loading module " + path.string());
-                    dlclose(lib);
-                }
-            }
-#endif
+    std::string line;
+    while (std::getline(file, line)) {
+        std::istringstream line_stream(line);
+        std::string lib_entry;
+        if (!std::getline(line_stream, lib_entry, '=')) {
+            continue;
         }
+        
+        std::string lib_name = lib_entry;
+        lib_name.erase(lib_name.find_last_not_of(" ") + 1); 
+        
+        std::string details;
+        if (!std::getline(line_stream, details)) {
+            continue;
+        }
+        
+        std::istringstream details_stream(details);
+        int module_id;
+        char comma;
+        details_stream >> module_id >> comma;
+        
+        if (module_id < 1 || module_id > 255 || comma != ',') {
+            std::cerr << "Ошибка парсинга строки: " << line << "\n";
+            logger.log(Logger::LogLevel::ERROR, "Error while parsing line " + std::string(line));
+            throw std::runtime_error("Parsing error, check log");
+        }
+        
+        std::vector<std::string> functions;
+        std::string function_name;
+        while (std::getline(details_stream, function_name, ',')) {
+            function_name.erase(0, function_name.find_first_not_of(" ")); // Убираем пробелы слева
+            function_name.erase(function_name.find_last_not_of(" ") + 1); // Убираем пробелы справа
+            functions.push_back(function_name);
+        }
+        
+        std::string lib_path = "./transport/" + lib_name;
+        MODULE_HANDLE handle;
+        handle = LOAD_MODULE(lib_path.c_str());
+        if (!handle) {
+            std::cerr << "Module loading error: " << lib_path << "\n";
+            logger.log(Logger::LogLevel::ERROR, "Module was not found in manifest file " + lib_path);
+            throw std::runtime_error("Loading module error, check log");
+        }
+        else {
+            modules.push_back(Module{handle, functions, lib_name});
+        }
+    }
+    populate_vtable();
+    return;
+}
+
+void tcp_server::populate_vtable() {
+    modules_vtable.reserve(modules.size());
+    for (size_t i = 0; i <= modules.size() - 1; ++i) {
+        std::vector<std::function<void(call_signature*)>> temp_vec;
+        for (size_t j = 0; j <= modules[i].functions.size() - 1; ++j) {
+            func_type* func_ptr = reinterpret_cast<func_type*>(GET_SYMBOL(modules[i].handle, modules[i].functions[j].c_str()));
+            MODULE_ERROR_t funcptr_err = GET_ERROR();
+            if (funcptr_err) {
+                logger.log(Logger::LogLevel::ERROR, "Failed to load function: " + std::string(funcptr_err));
+                throw std::runtime_error("Failed to load function from module, check log");
+            }
+            else {
+                std::function<void(call_signature*)> func = func_ptr;
+                temp_vec.push_back(func);
+                std::cout << "amogus" << std::endl;
+            }
+       }
+       modules_vtable.push_back(temp_vec);
     }
 }
 
-LAB_STATUS tcp_server::_execute(uint8_t transport_id, uint8_t _opcode, std::vector<uint8_t>& buffer_in, std::vector<uint8_t>& buffer_out, std::vector<uint8_t>& buffer_err, size_t& data_size) {
-    int transport = static_cast<int>(transport_id);
-    /*Lambda function to propagate error from the module*/
-    auto is_err_null = [](std::vector<uint8_t>& vec_err) -> bool {
-        bool found_non_zero = false;
-        size_t new_size = 0;
-        // Перебор всех элементов вектора
-        for (size_t i = 0; i < vec_err.size(); ++i) {
-            if (vec_err[i] != 0x00) {
-                found_non_zero = true; 
-                ++new_size;
-            } else if (found_non_zero) {
-                vec_err.resize(new_size);
-                break;
-            }
+bool tcp_server::check_error(std::vector<uint8_t>& vec_err) {
+    bool found_non_zero = false;
+    size_t new_size = 0;
+    for (size_t i = 0; i < vec_err.size(); ++i) {
+        if (vec_err[i] != 0x00) {
+            found_non_zero = true; 
+            ++new_size;
         }
-        return found_non_zero;
-    };
-
-    /*Echo functionality*/
-    if (transport_id == 0) {
-        std::memcpy(buffer_out.data(), buffer_in.data(), buffer_in.size());
-        data_size = buffer_in.size();
-        return SUCCESS;
-    } 
-    else if (transport_map.find(transport) != transport_map.end()) {
-        switch(_opcode) {
-            case OP_READ:
-            {
-                #ifdef _WIN32
-                func_type* func_ptr = reinterpret_cast<func_type*>(GetProcAddress(transport_map[transport], "lab_read"));
-                DWORD getprocaddr_error = GetLastError();
-                if (getprocaddr_error) {
-                    logger.log(Logger::LogLevel::ERROR, "Failed to load function: " + std::string(getprocaddr_error));
-                    return ERROR_NO_OPERATION;
-                }
-                #else
-                func_type* func_ptr = reinterpret_cast<func_type*>(dlsym(transport_map[transport], "lab_read"));
-                const char* dlsym_error = dlerror();
-                if (dlsym_error) {
-                    logger.log(Logger::LogLevel::ERROR, "Failed to load function: " + std::string(dlsym_error));
-                    return ERROR_NO_OPERATION;
-                }
-                #endif
-
-                // std::function<void(uint8_t*, uint8_t*, uint8_t*, size_t*, size_t, size_t)> func = func_ptr;
-                std::function<void(call_signature*)> func = func_ptr;
-                call_signature signature = {
-                    .buffer_in = buffer_in.data(),
-                    .buf_in_size = buffer_in.size(),
-                    .buffer_out = buffer_out.data(),
-                    .buf_out_size = buffer_out.size(),
-                    .buffer_err = buffer_err.data(),
-                    .data_written = &data_size
-                };
-                // func(buffer_in.data(), buffer_out.data(), buffer_err.data(), &data_size, buffer_in.size(), buffer_out.size());
-                func(&signature);
-                if (is_err_null(buffer_err)) {
-                    logger.log(Logger::LogLevel::ERROR, "Error occured in write function of transport "
-                                                        + std::to_string(transport)
-                                                        + std::string(": ")
-                                                        + std::string(reinterpret_cast<char*>(buffer_err.data()), buffer_err.size()));
-                    return ERROR_MODULE_INTERNAL;
-                }
-                else {
-                    return SUCCESS;
-                }
-            }
-            case OP_WRITE:
-            {
-                #ifdef _WIN32
-                func_type* func_ptr = reinterpret_cast<func_type*>(GetProcAddress(transport_map[transport], "lab_write"));
-                DWORD getprocaddr_error = GetLastError();
-                if (getprocaddr_error) {
-                    logger.log(Logger::LogLevel::ERROR, "Failed to load function: " + std::string(getprocaddr_error));
-                    // std:cerr << "Failed to load function": << std::string(getprocaddr_error) << std::endl;
-                    return ERROR_NO_OPERATION;
-                }
-                #else
-                func_type* func_ptr = reinterpret_cast<func_type*>(dlsym(transport_map[transport], "lab_write"));
-                const char* dlsym_error = dlerror();
-                if (dlsym_error) {
-                    logger.log(Logger::LogLevel::ERROR, "Failed to load function: " + std::string(dlsym_error));
-                    return ERROR_NO_OPERATION;
-                }
-                #endif
-                // std::function<void(uint8_t*, uint8_t*, uint8_t*, size_t*, size_t, size_t)> func = func_ptr;
-                // func(buffer_in.data(), buffer_out.data(), buffer_err.data(), &data_size, buffer_in.size(), buffer_out.size());
-                call_signature signature = {
-                    .buffer_in = buffer_in.data(),
-                    .buf_in_size = buffer_in.size(),
-                    .buffer_out = buffer_out.data(),
-                    .buf_out_size = buffer_out.size(),
-                    .buffer_err = buffer_err.data(),
-                    .data_written = &data_size
-                };
-                std::function<void(call_signature*)> func = func_ptr;
-                func(&signature);
-                if (is_err_null(buffer_err)) {
-                    logger.log(Logger::LogLevel::ERROR, "Error occured in write function of transport "
-                                                        + std::to_string(transport)
-                                                        + std::string(": ")
-                                                        + std::string(reinterpret_cast<char*>(buffer_err.data()), buffer_err.size()));
-                    return ERROR_MODULE_INTERNAL;
-                }
-                else {
-                    return SUCCESS;
-                }
-            }
-            default: return ERROR_INVALID_OPERATION;
+        else if (found_non_zero) {
+            vec_err.resize(new_size);
+            break;
         }
     }
-    else {
-        return ERROR_INVALID_TRANSPORT;
-    }
+    return found_non_zero;
+}
+
+LAB_STATUS tcp_server::module_execute(
+    uint8_t module_id,
+    uint8_t operation_id,
+    std::vector<uint8_t>& buffer_in,
+    std::vector<uint8_t>& buffer_out,
+    std::vector<uint8_t>& buffer_err,
+    size_t& data_size
+)
+{
+    size_t module_id_t = static_cast<size_t>(module_id);
+    size_t operation_id_t = static_cast<size_t>(operation_id);
+
+    if (module_id_t <= modules_vtable.size() - 1) {
+        if (module_id_t == 0) {
+            std::memcpy(buffer_out.data(), buffer_in.data(), buffer_in.size());
+            data_size = buffer_in.size();
+            return SUCCESS;
+        } 
+        if (operation_id <= modules_vtable[module_id_t].size() - 1) {
+            call_signature signature = {
+                .buffer_in = buffer_in.data(),
+                .buf_in_size = buffer_in.size(),
+                .buffer_out = buffer_out.data(),
+                .buf_out_size = buffer_out.size(),
+                .buffer_err = buffer_err.data(),
+                .data_written = &data_size
+            };
+            std::cout << "Module id: " << module_id_t << std::endl;
+            std::cout << "Operation id: " << operation_id_t << std::endl;
+            std::cout << "N of modules: " << modules_vtable.size() << std::endl;
+            std::cout << "N of functions: " << modules_vtable[module_id_t].size() << std::endl;
+            modules_vtable[module_id_t - 1][operation_id_t](&signature);
+            if (check_error(buffer_err)) {
+                logger.log(Logger::LogLevel::ERROR, "Error occured in function of module "
+                                                    + std::to_string(module_id_t)
+                                                    + std::string(": ")
+                                                    + std::string(reinterpret_cast<char*>(buffer_err.data()), buffer_err.size()));
+                return ERROR_MODULE_INTERNAL;
+
+            } else return SUCCESS;
+
+        } else return ERROR_INVALID_OPERATION;
+
+    } else return ERROR_INVALID_TRANSPORT;
 }
 
 void tcp_server::init_server() {
@@ -241,7 +201,10 @@ void tcp_server::init_server() {
 }
 
 void tcp_server::start() {
-    init_transports();
+    std::vector<Module> modules;
+    // std::shared_ptr<lab_vtable> modules_vtable;
+    lab_vtable modules_vtable;
+    load_manifest();
     init_server();
     std::cout << "Server listening on port " << port << std::endl;
     logger.log(Logger::LogLevel::DEBUG, "Server is listening on port " + std::to_string(port));
@@ -288,7 +251,7 @@ void tcp_server::handle_connection(int client_socket) {
 
     // Execute the processing function
     size_t bytes_written = 0;
-    LAB_STATUS exec_result = _execute(recv_buffer[1], recv_buffer[2], buf_in, buf_out, buf_err, bytes_written);
+    LAB_STATUS exec_result = module_execute(recv_buffer[1], recv_buffer[2], buf_in, buf_out, buf_err, bytes_written);
     uint8_t response_header[4] = {recv_buffer[0], recv_buffer[1], recv_buffer[2], exec_result};
     // Prepare response data
     if (exec_result == SUCCESS && bytes_written != 0) {
@@ -298,13 +261,10 @@ void tcp_server::handle_connection(int client_socket) {
         response_data.reserve(sizeof(response_header) + buf_out.size());
         response_data.insert(response_data.end(), response_header, response_header + sizeof(response_header));
         response_data.insert(response_data.end(), buf_out.begin(), buf_out.end());
-
         send(client_socket, response_data.data(), response_data.size(), 0);
     } else {
          // Send only the header with the execution result to the client
         send(client_socket, response_header, sizeof(response_header), 0);
-
-    // Close the socket
     }
     CLOSE_SOCKET(client_socket);
 }
