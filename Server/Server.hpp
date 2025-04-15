@@ -1,5 +1,23 @@
 #pragma once
-#include "lab_protocol.h"
+
+#define MAX_PACKET_SIZE                 4096
+#define BUFFER_OUTPUT_SIZE              4096
+#define BUFFER_ERROR_SIZE               4096
+#define PROTOCOL_V1                     0x01
+
+#define SUCCESS                         0x00
+#define ERROR_INVALID_FORMAT            0x01
+#define ERROR_INVALID_PROTOCOL          0x02
+#define ERROR_INVALID_TRANSPORT         0x03
+#define ERROR_INVALID_OPERATION         0x04
+#define ERROR_MODULE_INTERNAL           0x05
+#define ERROR_NO_OPERATION              0x06
+#define NO_OP                           0xFF
+
+#define LAB_STATUS uint8_t
+#define PROTOCOL_V1_HEADER_SIZE 4
+
+// #include "lab_protocol.h"
 #include "../Logger/Logger.hpp"
 #include <iostream>
 #include <thread>
@@ -21,12 +39,14 @@
     #include <windows.h>
     #include <winsock2.h>
     #include <ws2tcpip.h>
+    #include <psapi.h>
     #pragma comment(lib, "ws2_32.lib")
 #else
     #include <dlfcn.h>
     #include <sys/socket.h>
     #include <arpa/inet.h>
     #include <unistd.h>
+    #include <sys/resource.h>
 #endif
 
 #ifdef _WIN32
@@ -63,6 +83,36 @@ struct Module {
     std::string lib_name;                           ///< Имя библиотеки
 };
 
+struct ProcessInfo {
+    long vsize;
+    long rss;
+    long user_cpu_time;
+    long system_cpu_time;
+
+    std::string to_string() const {
+        return "Virtual Memory Size: " + std::to_string(vsize / 1024) + " KB\n" +
+               "Resident Set Size: " + std::to_string(rss / 1024) + " KB\n" +
+               "User CPU Time: " + std::to_string(user_cpu_time) + " s\n" +
+               "System CPU Time: " + std::to_string(system_cpu_time) + " s\n";
+    }
+
+    void to_uint8_vector(std::vector<uint8_t>& buffer) const {
+        auto append = [&buffer](const void* data, size_t size) {
+            const uint8_t* bytes = static_cast<const uint8_t*>(data);
+            buffer.insert(buffer.end(), bytes, bytes + size);
+        };
+
+        append(&vsize, sizeof(vsize));
+        append(&rss, sizeof(rss));
+        append(&user_cpu_time, sizeof(user_cpu_time));
+        append(&system_cpu_time, sizeof(system_cpu_time));
+    }
+
+    size_t size(void) {
+        return sizeof(vsize) + sizeof(rss) + sizeof(user_cpu_time) + sizeof(system_cpu_time);
+    }
+};
+
 namespace fs = std::filesystem;
 using func_type = void(call_signature*);
 using lab_vtable = std::vector<std::vector<std::function<void(call_signature*)>>>;
@@ -75,7 +125,6 @@ public:
     ~tcp_server();
 
     std::vector<Module> modules;
-    // std::shared_ptr<lab_vtable> modules_vtable;
     lab_vtable modules_vtable;
 
     void start();
