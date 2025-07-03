@@ -44,6 +44,15 @@ void tcp_server::init_server() {
     if (server_socket < 0) {
         throw std::runtime_error("Failed to create socket");
     }
+    int opt = 1;
+
+    if (setsockopt(server_socket, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt))) {
+        throw std::runtime_error("Failed to set socket option REUSEADDR");
+    }
+
+    if (setsockopt(server_socket, SOL_SOCKET, SO_REUSEPORT, &opt, sizeof(opt))) {
+        throw std::runtime_error("Failed to set socket option REUSEADDR");
+    }
 
     sockaddr_in server_addr{};
     server_addr.sin_family = AF_INET;
@@ -81,7 +90,7 @@ void tcp_server::start() {
 
 void tcp_server::handle_connection(int client_socket) {
     // Buffer for receiving data from the client
-    // constexpr size_t recv_buffer_size = BUFFER_SIZE;
+    
     std::vector<uint8_t> recv_buffer(MAX_PACKET_SIZE);
 
     // Receive data from the client
@@ -94,8 +103,8 @@ void tcp_server::handle_connection(int client_socket) {
     }
 
     // Allocate and populate the input buffer
-    std::vector<uint8_t> buf_in(recv_buffer.begin() + PROTOCOL_V1_HEADER_SIZE, recv_buffer.end());
-
+    std::vector<uint8_t> buf_in(recv_buffer.begin() + PROTOCOL_V1_HEADER_SIZE, recv_buffer.begin() + received_bytes);
+    
     // Allocate the output buffer
     size_t buf_out_size = (static_cast<size_t>(recv_buffer[2]) + 1) * BUFFER_OUTPUT_SIZE;
     std::vector<uint8_t> buf_out(buf_out_size);
@@ -105,11 +114,11 @@ void tcp_server::handle_connection(int client_socket) {
 
     // Execute the processing function
     size_t bytes_written = 0;
-    
-    // LAB_STATUS exec_result = module_execute(recv_buffer[1], recv_buffer[2], buf_in, buf_out, buf_err, bytes_written);
+    size_t module_id = static_cast<size_t>(recv_buffer[1]);
+    size_t function_id = static_cast<size_t>(recv_buffer[2]);
     int exec_result = loader.execute(
-        static_cast<size_t>(recv_buffer[1]),    // module id
-        static_cast<size_t>(recv_buffer[2]),    // function id
+        module_id,                              // module id
+        function_id,                            // function id
         buf_in,                                 // input buffer
         buf_out,                                // output buffer
         buf_err,                                // error buffer
@@ -131,9 +140,21 @@ void tcp_server::handle_connection(int client_socket) {
         send(client_socket, response_header, sizeof(response_header), 0);
         if (check_error(buf_err)) 
         {   
-            logger.log(Logger::LogLevel::ERROR, std::string("Error occured"));
+            std::string err(reinterpret_cast<const char*>(buf_err.data()), buf_err.size());
+            logger.log(
+            Logger::LogLevel::ERROR,
+            std::string( 
+                "Error occured in " + loader.modules[module_id-1].get_module_name() + ':' + loader.modules[module_id-1].get_function_name(function_id) + ' ' + err 
+            ));
         }
 
     }
     CLOSE_SOCKET(client_socket);
+}
+
+void tcp_server::print_uint8_vector(const std::vector<uint8_t>& vec) {
+    for (uint8_t byte : vec) {
+        std::cout << static_cast<int>(byte) << ' ';
+    }
+    std::cout << '\n';
 }

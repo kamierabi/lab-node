@@ -76,5 +76,6 @@ private:
 
     void init_server();
     void handle_connection(int client_socket);
+    void print_uint8_vector(const std::vector<uint8_t>& vec);
 
 };

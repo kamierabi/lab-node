@@ -66,32 +66,32 @@ struct module_metadata
 };
 
 namespace fs = std::filesystem;
-using func_type = int(*)(call_signature* args);
+typedef int (*func_type)(call_signature* args);
 
 
 struct Module
 {
-    MODULE_HANDLE handle;
+    void* handle;
     module_metadata* metadata;
     std::vector<std::function<int(call_signature*)>> functions;
 
     // Конструктор
     Module(const std::string& module_path) {
         dlerror();
-        handle = LOAD_MODULE(module_path.c_str());
+        handle = dlopen(module_path.c_str(), RTLD_NOW);
         if (!handle) {
-            throw std::runtime_error("Could not open library: " + std::string(GET_ERROR()));
+            throw std::runtime_error("Could not open library: " + std::string(dlerror()));
         }
 
-        metadata = reinterpret_cast<module_metadata*>(GET_SYMBOL(handle, "__metadata__"));
-        const char* err = GET_ERROR();
+        metadata = reinterpret_cast<module_metadata*>(dlsym(handle, "__metadata__"));
+        const char* err = dlerror();
         if (err != nullptr) {
             throw std::runtime_error("Failed to load metadata: " + std::string(err));
         }
 
-        for (size_t i = 0; i < metadata->func_count; ++i) {
-            func_type func_ptr = reinterpret_cast<func_type>(GET_SYMBOL(handle, metadata->functions_sym[i]));
-            const char* func_err = GET_ERROR();
+        for (int i = 0; i < metadata->func_count-1; ++i) {
+            func_type func_ptr = reinterpret_cast<func_type>(dlsym(handle, metadata->functions_sym[i]));
+            const char* func_err = dlerror();
             if (func_err) {
                 throw std::runtime_error("Failed to load function: " + std::string(func_err));
             }
@@ -114,7 +114,7 @@ struct Module
     Module& operator=(Module&& other) noexcept {
         if (this != &other) {
             // Закрыть старый handle
-            if (handle) FREE_MODULE(handle);
+            if (handle) dlclose(handle);
             handle = other.handle;
             metadata = other.metadata;
             functions = std::move(other.functions);
@@ -127,7 +127,7 @@ struct Module
 
     ~Module() {
         if (handle) {
-            FREE_MODULE(handle);
+            dlclose(handle);
         }
     }
 
@@ -137,13 +137,20 @@ struct Module
         }
         return std::string(metadata->module_id);
     }
+
+    std::string get_function_name(size_t n_func) const {
+        if (!metadata) {
+            throw std::runtime_error("Invalid metadata access");
+        }
+        return std::string(metadata->functions_sym[n_func]);
+    }
+
 };
 
 struct Loader
 {
     std::vector<Module> modules;
     std::string modules_repr;
-    std::unordered_map<std::string, std::vector<std::string>> aboba;
     size_t module_counter = 0;
     Loader(const std::string& dir_path);
 

@@ -37,7 +37,7 @@ int Loader::system_loader_info(call_signature* args)
     std::ostringstream oss;
     for (const auto& mod : modules) {
         oss << (mod.get_module_name());
-        for (size_t i = 0; i <= mod.metadata->func_count; ++i) {
+        for (size_t i = 0; i < mod.metadata->func_count; ++i) {
             oss << '\t' << mod.metadata->functions_sym[i];
         }
     }
@@ -76,6 +76,9 @@ int Loader::execute
         int res;
         switch (function_id)
         {
+        case 1: 
+            res = system_loader_info(&signature);
+            break;
         default:
             res = system_echo(&signature);
             break;
@@ -84,8 +87,8 @@ int Loader::execute
     }
     else {
         if (module_id > module_counter) return 3;
-        if (function_id > modules[module_id].functions.size() - 1) return 4; 
-        int result = modules[module_id].functions[function_id](&signature);
+        if (function_id > modules[module_id].functions.size() - 1) return 4;
+        int result = modules[module_id-1].functions[function_id](&signature);
         return result;
     }
 }
