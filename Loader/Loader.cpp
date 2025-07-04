@@ -1,9 +1,3 @@
-#include <iostream>
-#include <unordered_map>
-#include <dlfcn.h>
-#include <functional>
-#include <filesystem>
-#include <cstring>
 #include "Loader.hpp"
 
 
@@ -28,10 +22,11 @@ int Loader::system_echo(call_signature* args)
     return 0;
 }
 
-int Loader::system_proc_info(call_signature* args)
-{
-    return 1;
-}
+// int Loader::system_proc_info(call_signature* args)
+// {
+//     return 1;
+// }
+
 int Loader::system_loader_info(call_signature* args)
 {
     std::ostringstream oss;
@@ -40,8 +35,8 @@ int Loader::system_loader_info(call_signature* args)
         for (size_t i = 0; i < mod.metadata->func_count; ++i) {
             oss << '\t' << mod.metadata->functions_sym[i];
         }
+        oss << '\n';
     }
-    oss << '\n';
     auto tsv = oss.str();
     if (tsv.size() <= args->buf_out_size) {
         std::memcpy(args->buffer_out, tsv.c_str(), tsv.size());
@@ -63,7 +58,7 @@ int Loader::execute
         std::vector<uint8_t>& buffer_err,
         size_t& data_size
     ) 
-{
+{   
     call_signature signature = {
                 .buffer_in = buffer_in.data(),
                 .buf_in_size = buffer_in.size(),
@@ -72,7 +67,7 @@ int Loader::execute
                 .buffer_err = buffer_err.data(),
                 .data_written = &data_size
     };
-    if (module_id == 0) {
+    if (module_id == 255) {
         int res;
         switch (function_id)
         {
@@ -88,7 +83,7 @@ int Loader::execute
     else {
         if (module_id > module_counter) return 3;
         if (function_id > modules[module_id].functions.size() - 1) return 4;
-        int result = modules[module_id-1].functions[function_id](&signature);
+        int result = modules[module_id].functions[function_id](&signature);
         return result;
     }
 }

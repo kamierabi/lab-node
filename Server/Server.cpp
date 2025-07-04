@@ -2,9 +2,9 @@
 
 
 tcp_server::tcp_server(int _port) : 
+    loader(std::string("./modules")),
     port(_port),
     server_socket(-1),
-    loader(std::string("./modules")),
     logger()
 {}
 
@@ -89,6 +89,7 @@ void tcp_server::start() {
 }
 
 void tcp_server::handle_connection(int client_socket) {
+    auto start = std::chrono::high_resolution_clock::now();
     // Buffer for receiving data from the client
     
     std::vector<uint8_t> recv_buffer(MAX_PACKET_SIZE);
@@ -104,6 +105,7 @@ void tcp_server::handle_connection(int client_socket) {
 
     // Allocate and populate the input buffer
     std::vector<uint8_t> buf_in(recv_buffer.begin() + PROTOCOL_V1_HEADER_SIZE, recv_buffer.begin() + received_bytes);
+
     
     // Allocate the output buffer
     size_t buf_out_size = (static_cast<size_t>(recv_buffer[2]) + 1) * BUFFER_OUTPUT_SIZE;
@@ -150,6 +152,9 @@ void tcp_server::handle_connection(int client_socket) {
 
     }
     CLOSE_SOCKET(client_socket);
+    auto end = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<double, std::micro> elapsed = end - start;
+    logger.log(Logger::LogLevel::DEBUG, std::string("Request took " + std::to_string(elapsed.count()) + " µs"));
 }
 
 void tcp_server::print_uint8_vector(const std::vector<uint8_t>& vec) {

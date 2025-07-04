@@ -89,7 +89,7 @@ struct Module
             throw std::runtime_error("Failed to load metadata: " + std::string(err));
         }
 
-        for (int i = 0; i < metadata->func_count-1; ++i) {
+        for (size_t i = 0; i <= metadata->func_count-1; ++i) {
             func_type func_ptr = reinterpret_cast<func_type>(dlsym(handle, metadata->functions_sym[i]));
             const char* func_err = dlerror();
             if (func_err) {
@@ -155,7 +155,7 @@ struct Loader
     Loader(const std::string& dir_path);
 
     int system_echo(call_signature* args);
-    int system_proc_info(call_signature* args);
+    // int system_proc_info(call_signature* args);
     int system_loader_info(call_signature* args);
     int execute(
         size_t module_id,
