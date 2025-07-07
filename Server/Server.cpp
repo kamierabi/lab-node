@@ -8,6 +8,12 @@ Server::Server(int port, size_t thread_count) :
     thread_pool_(thread_count)
     {
         signal(SIGPIPE, SIG_IGN);
+#ifdef _WIN32
+    WSADATA wsa_data;
+    if (WSAStartup(MAKEWORD(2, 2), &wsa_data) != 0) {
+        throw std::runtime_error("WSAStartup failed");
+    }
+#endif
 
         server_socket_ = socket(AF_INET, SOCK_STREAM, 0);
         if (server_socket_ == -1) {
@@ -35,7 +41,10 @@ Server::Server(int port, size_t thread_count) :
 
 Server::~Server() {
     if (server_socket_ != -1) {
-        close(server_socket_);
+        CLOSE_SOCKET(server_socket_);
+#ifdef WIN32
+        WSACleanup();
+#endif
     }
     logger_.log(Logger::LogLevel::DEBUG, "Server shut down");
 }
@@ -70,7 +79,7 @@ void Server::handle_client(int client_socket) {
     // Receive data from the client
     ssize_t received_bytes = recv(client_socket, recv_buffer.data(), MAX_PACKET_SIZE, 0);
     if (received_bytes < PROTOCOL_V1_HEADER_SIZE) {
-        std::cerr << "Error: Insufficient data received from client." << std::endl;
+        // std::cerr << "Error: Insufficient data received from client." << std::endl;
         logger_.log(Logger::LogLevel::ERROR, "Insufficient data received from client");
         CLOSE_SOCKET(client_socket);
         return;

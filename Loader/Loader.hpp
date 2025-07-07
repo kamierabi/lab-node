@@ -71,27 +71,27 @@ typedef int (*func_type)(call_signature* args);
 
 struct Module
 {
-    void* handle;
+    MODULE_HANDLE handle;
     module_metadata* metadata;
     std::vector<std::function<int(call_signature*)>> functions;
 
     // Конструктор
     Module(const std::string& module_path) {
-        dlerror();
-        handle = dlopen(module_path.c_str(), RTLD_NOW);
+        GET_ERROR();
+        handle = LOAD_MODULE(module_path.c_str());
         if (!handle) {
-            throw std::runtime_error("Could not open library: " + std::string(dlerror()));
+            throw std::runtime_error("Could not open library: " + std::string(GET_ERROR()));
         }
 
-        metadata = reinterpret_cast<module_metadata*>(dlsym(handle, "__metadata__"));
-        const char* err = dlerror();
+        metadata = reinterpret_cast<module_metadata*>(GET_SYMBOL(handle, "__metadata__"));
+        MODULE_ERROR_t err = GET_ERROR();
         if (err) {
             throw std::runtime_error("Failed to load metadata: " + std::string(err));
         }
 
         for (size_t i = 0; i <= metadata->func_count-1; ++i) {
-            func_type func_ptr = reinterpret_cast<func_type>(dlsym(handle, metadata->functions_sym[i]));
-            const char* func_err = dlerror();
+            func_type func_ptr = reinterpret_cast<func_type>(GET_SYMBOL(handle, metadata->functions_sym[i]));
+            MODULE_ERROR_t func_err = GET_ERROR();
             if (func_err) {
                 throw std::runtime_error("Failed to load function: " + std::string(func_err));
             }
@@ -114,7 +114,7 @@ struct Module
     Module& operator=(Module&& other) noexcept {
         if (this != &other) {
             // Закрыть старый handle
-            if (handle) dlclose(handle);
+            if (handle) FREE_MODULE(handle);
             handle = other.handle;
             metadata = other.metadata;
             functions = std::move(other.functions);
@@ -127,7 +127,7 @@ struct Module
 
     ~Module() {
         if (handle) {
-            dlclose(handle);
+            FREE_MODULE(handle);
         }
     }
 
