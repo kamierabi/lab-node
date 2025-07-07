@@ -85,7 +85,7 @@ struct Module
 
         metadata = reinterpret_cast<module_metadata*>(dlsym(handle, "__metadata__"));
         const char* err = dlerror();
-        if (err != nullptr) {
+        if (err) {
             throw std::runtime_error("Failed to load metadata: " + std::string(err));
         }
 

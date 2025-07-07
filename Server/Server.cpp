@@ -1,94 +1,67 @@
 #include "Server.hpp"
 
+Server::Server(int port, size_t thread_count) :
+    port_(port),
+    server_socket_(-1),
+    logger_("log"),
+    loader_(std::string("./modules")),
+    thread_pool_(thread_count)
+    {
+        signal(SIGPIPE, SIG_IGN);
 
-tcp_server::tcp_server(int _port) : 
-    loader(std::string("./modules")),
-    port(_port),
-    server_socket(-1),
-    logger()
-{}
-
-tcp_server::~tcp_server() {
-    CLOSE_SOCKET(server_socket);
-#ifdef WIN32
-    WSACleanup();
-#endif
-}
-
-
-bool tcp_server::check_error(std::vector<uint8_t>& vec_err) {
-    bool found_non_zero = false;
-    size_t new_size = 0;
-    for (size_t i = 0; i < vec_err.size(); ++i) {
-        if (vec_err[i] != 0x00) {
-            found_non_zero = true; 
-            ++new_size;
+        server_socket_ = socket(AF_INET, SOCK_STREAM, 0);
+        if (server_socket_ == -1) {
+            throw std::runtime_error("Socket creation failed");
         }
-        else if (found_non_zero) {
-            vec_err.resize(new_size);
-            break;
+
+        int opt = 1;
+        setsockopt(server_socket_, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+
+        sockaddr_in address{};
+        address.sin_family = AF_INET;
+        address.sin_addr.s_addr = INADDR_ANY;
+        address.sin_port = htons(port_);
+
+        if (bind(server_socket_, (struct sockaddr*)&address, sizeof(address)) < 0) {
+            throw std::runtime_error("Bind failed");
         }
+
+        if (listen(server_socket_, 128) < 0) {
+            throw std::runtime_error("Listen failed");
+        }
+
+        logger_.log(Logger::LogLevel::DEBUG, "Server initialized on port " + std::to_string(port_));
     }
-    return found_non_zero;
+
+Server::~Server() {
+    if (server_socket_ != -1) {
+        close(server_socket_);
+    }
+    logger_.log(Logger::LogLevel::DEBUG, "Server shut down");
 }
 
-
-void tcp_server::init_server() {
-#ifdef _WIN32
-    WSADATA wsa_data;
-    if (WSAStartup(MAKEWORD(2, 2), &wsa_data) != 0) {
-        throw std::runtime_error("WSAStartup failed");
-    }
-#endif
-    server_socket = socket(AF_INET, SOCK_STREAM, 0);
-    if (server_socket < 0) {
-        throw std::runtime_error("Failed to create socket");
-    }
-    int opt = 1;
-
-    if (setsockopt(server_socket, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt))) {
-        throw std::runtime_error("Failed to set socket option REUSEADDR");
-    }
-
-    if (setsockopt(server_socket, SOL_SOCKET, SO_REUSEPORT, &opt, sizeof(opt))) {
-        throw std::runtime_error("Failed to set socket option REUSEADDR");
-    }
-
-    sockaddr_in server_addr{};
-    server_addr.sin_family = AF_INET;
-    server_addr.sin_addr.s_addr = INADDR_ANY;
-    server_addr.sin_port = htons(port);
-
-    if (bind(server_socket, reinterpret_cast<struct sockaddr*>(&server_addr), sizeof(server_addr)) < 0) {
-        throw std::runtime_error("Failed to bind socket");
-    }
-    if (listen(server_socket, SOMAXCONN) < 0) {
-        throw std::runtime_error("Failed to listen on socket");
-    }
+void Server::run() {
+    logger_.log(Logger::LogLevel::DEBUG, "Server started");
+    accept_loop();
 }
 
-void tcp_server::start() {
-    init_server();
-    std::cout << "Server listening on port " << port << std::endl;
-    logger.log(Logger::LogLevel::DEBUG, "Server is listening on port " + std::to_string(port));
-
+void Server::accept_loop() {
     while (true) {
-        sockaddr_in client_addr;
+        sockaddr_in client_addr{};
         socklen_t client_len = sizeof(client_addr);
-        int client_socket = accept(server_socket, reinterpret_cast<struct sockaddr*>(&client_addr), &client_len);
-
+        int client_socket = accept(server_socket_, (struct sockaddr*)&client_addr, &client_len);
         if (client_socket < 0) {
-            std::cerr << "Failed to accept client connection" << std::endl;
-            logger.log(Logger::LogLevel::ERROR, "Failed to accept client connection");
+            logger_.log(Logger::LogLevel::ERROR, "Accept failed");
             continue;
         }
 
-        std::lock_guard<std::mutex> lock(thread_mutex);
-        threads.emplace_back(&tcp_server::handle_connection, this, client_socket);
+        thread_pool_.enqueue([this, client_socket]() {
+            handle_client(client_socket);
+        });
     }
 }
 
-void tcp_server::handle_connection(int client_socket) {
+void Server::handle_client(int client_socket) {
     auto start = std::chrono::high_resolution_clock::now();
     // Buffer for receiving data from the client
     
@@ -98,7 +71,7 @@ void tcp_server::handle_connection(int client_socket) {
     ssize_t received_bytes = recv(client_socket, recv_buffer.data(), MAX_PACKET_SIZE, 0);
     if (received_bytes < PROTOCOL_V1_HEADER_SIZE) {
         std::cerr << "Error: Insufficient data received from client." << std::endl;
-        logger.log(Logger::LogLevel::ERROR, "Insufficient data received from client");
+        logger_.log(Logger::LogLevel::ERROR, "Insufficient data received from client");
         CLOSE_SOCKET(client_socket);
         return;
     }
@@ -118,7 +91,7 @@ void tcp_server::handle_connection(int client_socket) {
     size_t bytes_written = 0;
     size_t module_id = static_cast<size_t>(recv_buffer[1]);
     size_t function_id = static_cast<size_t>(recv_buffer[2]);
-    int exec_result = loader.execute(
+    int exec_result = loader_.execute(
         module_id,                              // module id
         function_id,                            // function id
         buf_in,                                 // input buffer
@@ -143,10 +116,10 @@ void tcp_server::handle_connection(int client_socket) {
         if (check_error(buf_err)) 
         {   
             std::string err(reinterpret_cast<const char*>(buf_err.data()), buf_err.size());
-            logger.log(
+            logger_.log(
             Logger::LogLevel::ERROR,
             std::string( 
-                "Error occured in " + loader.modules[module_id-1].get_module_name() + ':' + loader.modules[module_id-1].get_function_name(function_id) + ' ' + err 
+                "Error occured in " + loader_.modules[module_id].get_module_name() + ':' + loader_.modules[module_id].get_function_name(function_id) + ' ' + err 
             ));
         }
 
@@ -154,12 +127,28 @@ void tcp_server::handle_connection(int client_socket) {
     CLOSE_SOCKET(client_socket);
     auto end = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double, std::micro> elapsed = end - start;
-    logger.log(Logger::LogLevel::DEBUG, std::string("Request took " + std::to_string(elapsed.count()) + " µs"));
+    logger_.log(Logger::LogLevel::DEBUG, "Request took " + std::to_string(elapsed.count()) + " µs");
 }
 
-void tcp_server::print_uint8_vector(const std::vector<uint8_t>& vec) {
+void Server::print_uint8_vector(const std::vector<uint8_t>& vec) {
     for (uint8_t byte : vec) {
         std::cout << static_cast<int>(byte) << ' ';
     }
     std::cout << '\n';
+}
+
+bool Server::check_error(std::vector<uint8_t>& vec_err) {
+    bool found_non_zero = false;
+    size_t new_size = 0;
+    for (size_t i = 0; i < vec_err.size(); ++i) {
+        if (vec_err[i] != 0x00) {
+            found_non_zero = true; 
+            ++new_size;
+        }
+        else if (found_non_zero) {
+            vec_err.resize(new_size);
+            break;
+        }
+    }
+    return found_non_zero;
 }

@@ -1,27 +1,36 @@
 #include "./Server/Server.hpp"
 
-constexpr int DEFAULT_PORT = 9481;
-// TODO: не плодить логи при failed to bind socket
-// TODO: обработка SIGSEGV который может возникнуть при вызове библиотеки: вызвать std::exception
-// TODO: разделить репозитории с модулями и с самим сервером
-// TODO: протестировать совместимость с Windows 
-// TODO: README, LICENSE, копирайты на файлы
+#include <iostream>
+#include <cstdlib>
+#include <getopt.h>
 
+int port = 9481;
+size_t thread_count = 8;
 
 int main(int argc, char* argv[]) {
-    try {
-        if (argc < 2) {
-            tcp_server server(DEFAULT_PORT);
-            server.start();
+    int opt;
+    while ((opt = getopt(argc, argv, "p:t:")) != -1) {
+        switch (opt) {
+            case 'p':
+                port = std::atoi(optarg);
+                break;
+            case 't':
+                thread_count = std::atoi(optarg);
+                break;
+            default:
+                std::cerr << "Usage: " << argv[0] << " [-p port] [-t thread_count]" << std::endl;;
+                return 1;
         }
-        else {
-            tcp_server server(std::atoi(argv[1]));
-            server.start();
-        } 
-    } catch (const std::exception& e) {
-        std::cerr << "Error: " << e.what() << std::endl;
-        return EXIT_FAILURE;
     }
 
-    return EXIT_SUCCESS;
+    try {
+        Server server(port, thread_count);
+        std::cout << "Server is running on port " << port << std::endl;
+        server.run();
+    } catch (const std::exception& e) {
+        std::cerr << (std::string("Fatal error: ") + e.what()) << std::endl;
+        return 1;
+    }
+
+    return 0;
 }
