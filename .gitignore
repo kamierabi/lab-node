@@ -6,3 +6,4 @@ feature-websocket
 test*
 lab-iserver
 to_remove/
+*.obj

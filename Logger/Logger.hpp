@@ -10,7 +10,7 @@
 
 class Logger {
 public:
-    enum class LogLevel {DEBUG, WARNING, ERROR, FATAL};
+    enum class LogLevel {DEBUG, WARNING, ERR, FATAL};
     explicit Logger(const std::string& log_file_prefix = "log");
     ~Logger();
     void log(LogLevel level, const std::string& message);
