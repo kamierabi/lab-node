@@ -5,12 +5,12 @@ setlocal
 set CXX=cl
 set CXXFLAGS=/std:c++20 /EHsc /Iinclude
 set SOURCES=Logger\Logger.cpp Server\Server.cpp ThreadPool\ThreadPool.cpp Loader\Loader.cpp main.cpp
-set TARGET=lab-iserver.exe
+set TARGET=build\lab-iserver.exe
 
 :: Очистка предыдущих сборок
 if exist %TARGET% del %TARGET%
 del *.obj 2>nul
-
+mkdir build
 :: Компиляция
 %CXX% %CXXFLAGS% %SOURCES% /Fe:%TARGET%
 

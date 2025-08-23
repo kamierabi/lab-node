@@ -1,9 +1,7 @@
 .vscode
-transport
-modules
 logs
-feature-websocket
-test*
 lab-iserver
-to_remove/
 *.obj
+build/
+modules/
+project_ctx.md
